@@ -31,6 +31,43 @@ npm run dev
 
 ## Docker 部署
 
+### 使用预构建镜像
+
+发布版镜像会推送到 GitHub Container Registry。服务器不需要安装 Node.js，也不需要编译前端。
+
+```bash
+mkdir -p kuaiwen/data
+cd kuaiwen
+```
+
+创建 `docker-compose.yml`：
+
+```yaml
+name: kuaiwen
+
+services:
+  kuaiwen:
+    image: ghcr.io/kontayun/kuaiwen:latest
+    container_name: kuaiwen
+    restart: unless-stopped
+    environment:
+      KUAIWEN_PASSWORD: "your-strong-password"
+      KUAIWEN_SESSION_SECRET: "your-long-random-secret"
+      KUAIWEN_CONFIG_PATH: "/app/data/config.json"
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "3000:3000"
+```
+
+启动：
+
+```bash
+docker compose up -d
+```
+
+### 从源码构建
+
 复制环境变量示例：
 
 ```bash
