@@ -1,0 +1,15 @@
+name: kuaiwen
+
+services:
+  kuaiwen:
+    build: .
+    container_name: kuaiwen
+    restart: unless-stopped
+    environment:
+      KUAIWEN_PASSWORD: "${KUAIWEN_PASSWORD:-kuaiwen}"
+      KUAIWEN_SESSION_SECRET: "${KUAIWEN_SESSION_SECRET:-change-this-to-a-long-random-string}"
+      KUAIWEN_CONFIG_PATH: "${KUAIWEN_CONFIG_PATH:-/app/data/config.json}"
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "3000:3000"

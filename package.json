@@ -1,0 +1,26 @@
+{
+  "name": "kuaiwen",
+  "version": "1.0.0",
+  "description": "A self-hosted paste-to-ask AI assistant with OpenAI-compatible model support.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "node --watch server/index.js",
+    "dev:client": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "express": "^4.19.2",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^8.0.11"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

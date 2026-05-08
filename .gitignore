@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+*.log
+data/
+*.tar
+*.tar.gz
+npm-debug.log*
+.DS_Store
