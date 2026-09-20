@@ -6,9 +6,12 @@ services:
     container_name: kuaiwen
     restart: unless-stopped
     environment:
-      KUAIWEN_PASSWORD: "${KUAIWEN_PASSWORD:-kuaiwen}"
-      KUAIWEN_SESSION_SECRET: "${KUAIWEN_SESSION_SECRET:-change-this-to-a-long-random-string}"
-      KUAIWEN_CONFIG_PATH: "${KUAIWEN_CONFIG_PATH:-/app/data/config.json}"
+      KUAIWEN_PASSWORD: "${KUAIWEN_PASSWORD:?请在 .env 中设置至少 12 位密码}"
+      KUAIWEN_SESSION_SECRET: "${KUAIWEN_SESSION_SECRET:?请在 .env 中设置至少 32 位随机密钥}"
+      KUAIWEN_CONFIG_PATH: "/app/data/config.json"
+      KUAIWEN_REQUEST_TIMEOUT_MS: "${KUAIWEN_REQUEST_TIMEOUT_MS:-90000}"
+      KUAIWEN_SECURE_COOKIE: "${KUAIWEN_SECURE_COOKIE:-false}"
+      KUAIWEN_TRUST_PROXY: "${KUAIWEN_TRUST_PROXY:-0}"
     volumes:
       - ./data:/app/data
     ports:

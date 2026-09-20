@@ -7,3 +7,5 @@ data
 *.tar.gz
 *.log
 npm-debug.log
+test-results
+playwright-report

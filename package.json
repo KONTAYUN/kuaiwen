@@ -1,26 +1,41 @@
 {
   "name": "kuaiwen",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A self-hosted paste-to-ask AI assistant with OpenAI-compatible model support.",
   "license": "MIT",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "node --watch server/index.js",
+    "dev:server": "node --env-file-if-exists=.env --watch server/index.js",
     "dev:client": "vite --host 0.0.0.0",
     "build": "vite build",
-    "start": "node server/index.js"
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "test": "node --test tests/*.test.js",
+    "test:ui": "playwright test",
+    "format": "prettier --write src server shared tests *.js *.json README.md .github/workflows/*.yml docker-compose.yml"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^6.0.1",
     "express": "^4.19.2",
+    "express-rate-limit": "^8.2.1",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "vite": "^8.0.11"
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "@playwright/test": "^1.58.2",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^8.2.2",
+    "prettier": "^3.9.8",
+    "vite": "^8.3.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }
