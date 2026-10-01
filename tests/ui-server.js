@@ -13,7 +13,14 @@ await fs.writeFile(
   configPath,
   JSON.stringify({
     profiles: [
-      { id: "mock", name: "日常快问", model: "mock-fast", baseUrl, apiKey: "mock-secret-never-expose" },
+      {
+        id: "mock",
+        name: "日常快问",
+        model: "mock-fast",
+        baseUrl,
+        apiKey: "mock-secret-never-expose",
+        supportsImages: true
+      },
       { id: "second", name: "备用模型", model: "mock-fast", baseUrl, apiKey: "mock-second-secret" }
     ],
     activeProfileId: "mock"

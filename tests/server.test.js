@@ -8,6 +8,100 @@ import { createApp } from "../server/app.js";
 import { readSse } from "../shared/stream.js";
 import { createMockModel, listen, close } from "./mock-model.js";
 
+const image =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=";
+
+test("development proxy preserves browser origin for login and still rejects cross-site requests", async (t) => {
+  const f = await fixture(t);
+  const { createServer } = await import("vite");
+  const { default: config } = await import("../vite.config.js");
+  const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), "kuaiwen-vite-test-"));
+  const vite = await createServer({
+    ...config,
+    configFile: false,
+    cacheDir,
+    logLevel: "silent",
+    server: {
+      host: "127.0.0.1",
+      port: 0,
+      hmr: false,
+      proxy: { "/api": { ...config.server.proxy["/api"], target: f.base } }
+    }
+  });
+  t.after(async () => {
+    await vite.close();
+    await fs.rm(cacheDir, { recursive: true, force: true });
+  });
+  await vite.listen();
+  const base = `http://127.0.0.1:${vite.httpServer.address().port}`;
+  for (const [origin, status] of [
+    [base, 200],
+    ["https://other.invalid", 403]
+  ]) {
+    const response = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: origin },
+      body: JSON.stringify({ password: "test-password" })
+    });
+    assert.equal(response.status, status);
+    if (status === 200) assert.match(response.headers.get("set-cookie"), /kuaiwen_session=/);
+    await response.text();
+  }
+});
+
+test("image capability persists, defaults off, and gates multimodal requests", async (t) => {
+  const f = await fixture(t);
+  await f.login();
+  const profile = await f.profile();
+  assert.equal(profile.supportsImages, false);
+  assert.equal((await f.request("/api/ask", { profileId: profile.id, images: [image] })).status, 400);
+  const enabled = await f.request("/api/profiles", { id: profile.id, supportsImages: true });
+  assert.equal((await enabled.json()).profiles[0].supportsImages, true);
+  const retained = await f.request("/api/profiles", { id: profile.id, name: "改名" });
+  assert.equal((await retained.json()).profiles[0].supportsImages, true);
+  for (const content of ["", "这张图的错误怎么解决？"]) {
+    const response = await f.request("/api/ask", {
+      profileId: profile.id,
+      content,
+      images: [image],
+      intent: "auto"
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+    const message = f.mock.requests.at(-1).body.messages.at(-1);
+    assert.equal(message.content[0].type, "text");
+    assert.ok(message.content[0].text);
+    if (content) assert.equal(message.content[0].text, content);
+    assert.deepEqual(message.content[1], { type: "image_url", image_url: { url: image } });
+  }
+  await f.request("/api/profiles", { id: profile.id, supportsImages: false });
+  assert.equal((await f.request("/api/ask", { profileId: profile.id, images: [image] })).status, 400);
+});
+
+test("image validation rejects malformed, remote, oversized and excessive attachments", async (t) => {
+  const f = await fixture(t);
+  await f.login();
+  const profile = await f.profile();
+  await f.request("/api/profiles", { id: profile.id, supportsImages: true });
+  for (const images of [
+    null,
+    {},
+    ["https://example.com/image.png"],
+    ["data:image/svg+xml;base64,PHN2Zz4="],
+    ["data:image/png;base64,!!!!"],
+    Array(5).fill(image),
+    ["data:image/png;base64," + Buffer.alloc(2 * 1024 * 1024 + 1).toString("base64")]
+  ]) {
+    // null means no attachments; an empty request must still be rejected.
+    assert.equal((await f.request("/api/ask", { profileId: profile.id, images })).status, 400);
+  }
+  assert.equal(f.mock.requests.length, 0);
+  const largeImage = "data:image/png;base64," + Buffer.alloc(1100000).toString("base64");
+  const response = await f.request("/api/ask", { profileId: profile.id, images: [largeImage] });
+  assert.equal(response.status, 200);
+  await response.text();
+});
+
 async function fixture(t, options = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kuaiwen-test-"));
   const mock = createMockModel();

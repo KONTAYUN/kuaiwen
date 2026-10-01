@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, PlugZap, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { requestJson } from "./api";
 
-const emptyDraft = () => ({ name: "", baseUrl: "", model: "", apiKey: "" });
+const emptyDraft = () => ({ name: "", baseUrl: "", model: "", apiKey: "", supportsImages: false });
 
 function ModelCombobox({ value, options, disabled, onChange }) {
   const [open, setOpen] = useState(false);
@@ -232,6 +232,20 @@ export default function Settings({ config, onConfig }) {
                 disabled={!!pending}
                 onChange={(value) => field("model", value)}
               />
+            </label>
+          </div>
+          <div className="preference-row">
+            <div>
+              <strong>图片理解</strong>
+              <p>开启后可粘贴图片，请确认模型支持图文输入</p>
+            </div>
+            <label className="switch-label">
+              <input
+                type="checkbox"
+                checked={draft.supportsImages === true}
+                onChange={(event) => field("supportsImages", event.target.checked)}
+              />
+              支持图片理解
             </label>
           </div>
           <div className="settings-actions">

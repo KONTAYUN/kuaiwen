@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { once } from "node:events";
 import { createConfigStore, publicConfig } from "./config-store.js";
+import { MAX_IMAGES, validImageUrl } from "../shared/images.js";
 import {
   HttpError,
   normalizeBaseUrl,
@@ -45,7 +46,9 @@ export function createApp({
     }
     next();
   });
-  app.use(express.json({ limit: "1mb" }));
+  app.use(
+    express.json({ limit: "1mb", type: (req) => req.path !== "/api/ask" && req.is("application/json") })
+  );
   const sign = (value) => crypto.createHmac("sha256", secret).update(value).digest("base64url");
   const equal = (a, b) => {
     const x = Buffer.from(a);
@@ -126,7 +129,9 @@ export function createApp({
       name: text(draft.name) || model || "未命名模型",
       baseUrl,
       apiKey,
-      model
+      model,
+      supportsImages:
+        typeof draft.supportsImages === "boolean" ? draft.supportsImages : saved?.supportsImages === true
     };
   }
   app.post(
@@ -273,12 +278,19 @@ export function createApp({
   );
   app.post(
     "/api/ask",
+    express.json({ limit: "12mb" }),
     wrap(async (req, res) => {
       const content = typeof req.body?.content === "string" ? req.body.content.trim() : "";
-      if (!content || content.length > 50000) throw new HttpError(400, "请输入 1–50000 个字符。");
+      const images = req.body?.images ?? [];
+      if (!Array.isArray(images) || images.length > MAX_IMAGES || !images.every(validImageUrl))
+        throw new HttpError(400, "图片格式不正确，最多 4 张，每张不超过 2 MB。");
+      if ((!content && !images.length) || content.length > 50000)
+        throw new HttpError(400, "请输入文字或图片，文字最多 50000 个字符。");
       const intent = req.body.intent || "auto";
       if (!Object.hasOwn(intents, intent)) throw new HttpError(400, "不支持该处理方式。");
       const profile = await savedProfile(req.body.profileId);
+      if (images.length && !profile.supportsImages)
+        throw new HttpError(400, "当前模型未开启图片理解，请选择支持图片的模型或在设置中开启。");
       if (activeRequests >= 4) throw new HttpError(429, "同时进行的请求过多，请稍后重试。");
       activeRequests++;
       const scope = requestScope(res);
@@ -291,7 +303,7 @@ export function createApp({
         const response = await upstreamRequest(profile, "/chat/completions", scope.signal, {
           model: profile.model,
           stream: true,
-          messages: messagesFor(content, intent)
+          messages: messagesFor(content, intent, images)
         });
         res.status(200).set({
           "Content-Type": "text/event-stream; charset=utf-8",

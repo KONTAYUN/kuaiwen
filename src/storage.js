@@ -1,3 +1,4 @@
+import { MAX_IMAGES, validImageUrl } from "../shared/images.js";
 export const preferenceKey = "kuaiwen.preferences.v1";
 export const historyKey = "kuaiwen.history.v1";
 export const defaults = { autoSend: true, delay: 3, saveHistory: true };
@@ -25,6 +26,10 @@ export function readHistory() {
               typeof item.answer === "string"
           )
           .slice(0, 30)
+          .map((item) => ({
+            ...item,
+            images: Array.isArray(item.images) ? item.images.filter(validImageUrl).slice(0, MAX_IMAGES) : []
+          }))
       : [];
   } catch {
     return [];
@@ -32,7 +37,7 @@ export function readHistory() {
 }
 export function writeHistory(items) {
   // Bound both record count and total storage to avoid exhausting localStorage.
-  const result = items.slice(0, 30);
+  const result = items.filter((item) => JSON.stringify(item).length <= 1_500_000).slice(0, 30);
   while (JSON.stringify(result).length > 1_500_000 && result.length) result.pop();
   localStorage.setItem(historyKey, JSON.stringify(result));
   return result;

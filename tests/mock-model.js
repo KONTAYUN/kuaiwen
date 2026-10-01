@@ -16,7 +16,13 @@ export function createMockModel() {
     for await (const chunk of req) raw += chunk;
     const body = raw ? JSON.parse(raw) : {};
     requests.push({ url: req.url, body, authorization: req.headers.authorization });
-    const prompt = body.messages?.at(-1)?.content || "";
+    const content = body.messages?.at(-1)?.content;
+    const prompt = Array.isArray(content)
+      ? content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n")
+      : content || "";
     res.on("close", () => {
       if (!res.writableEnded) aborted.push(prompt);
     });

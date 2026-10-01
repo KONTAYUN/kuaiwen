@@ -19,6 +19,9 @@ import {
 } from "lucide-react";
 import { requestJson } from "./api";
 import { useAsk } from "./useAsk";
+import { prepareImage } from "./images";
+import { MAX_IMAGES } from "../shared/images";
+import ImagePreview from "./ImagePreview";
 import { readPreferences, preferenceKey, readHistory, writeHistory, historyKey } from "./storage";
 import Settings from "./Settings";
 import Answer, { intentLabels } from "./Answer";
@@ -151,6 +154,9 @@ function Workspace({ onLogout }) {
   const [loadError, setLoadError] = useState("");
   const [view, setView] = useState("ask");
   const [content, setContent] = useState("");
+  const [images, setImages] = useState([]);
+  const [preparing, setPreparing] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
   const [intent, setIntent] = useState("auto");
   const [preferences, setPreferences] = useState(readPreferences);
   const [history, setHistory] = useState(() => (readPreferences().saveHistory ? readHistory() : []));
@@ -162,6 +168,8 @@ function Workspace({ onLogout }) {
   const timer = useRef(null);
   const deadline = useRef(0);
   const composing = useRef(false);
+  const imageOperation = useRef(null);
+  const editRevision = useRef(0);
   const latest = useRef({});
   const historyRef = useRef(history);
   const profile = config.profiles.find((p) => p.id === config.activeProfileId) || config.profiles[0];
@@ -172,13 +180,18 @@ function Workspace({ onLogout }) {
       historyRef.current = next;
       setHistory(next);
       if (!next.some((entry) => entry.id === item.id))
-        setNotice("本次回答过长，未保存到历史。你仍可复制回答。");
+        setNotice("本次内容或图片过大，未保存到历史。你仍可复制回答。");
     } catch {
       setNotice("浏览器存储空间不足，本次历史未保存。你仍可复制回答。");
     }
   }
   const ask = useAsk({ onRecord: record });
-  latest.current = { content, profile, intent, preferences, view, loading, switching };
+  latest.current = { content, images, profile, intent, preferences, view, loading, switching };
+  function cancelImages() {
+    imageOperation.current = null;
+    setPreparing(false);
+    editRevision.current++;
+  }
   function cancelTimer() {
     clearTimeout(timer.current);
     timer.current = null;
@@ -189,17 +202,32 @@ function Workspace({ onLogout }) {
     cancelTimer();
     const state = latest.current;
     if (state.loading || state.switching || state.view !== "ask" || composing.current) return;
-    ask.ask({ content: value, profile: state.profile, intent: state.intent }, { force });
+    if (imageOperation.current) {
+      if (force) imageOperation.current.sendWhenReady = true;
+      return;
+    }
+    if (state.images.length && !state.profile?.supportsImages) {
+      setNotice("当前模型未开启图片理解，请切换模型或在设置中开启。");
+      return;
+    }
+    ask.ask(
+      { content: value, images: state.images, profile: state.profile, intent: state.intent },
+      { force }
+    );
   }
   function schedule() {
     cancelTimer();
     const state = latest.current;
     if (
       !state.preferences.autoSend ||
-      !state.content.trim() ||
+      (!state.content.trim() && !state.images.length) ||
       state.content.length > 50000 ||
       !state.profile ||
-      composing.current
+      composing.current ||
+      imageOperation.current ||
+      (state.images.length && !state.profile?.supportsImages) ||
+      state.view !== "ask" ||
+      document.hidden
     )
       return;
     const delay = state.preferences.delay * 1000;
@@ -208,22 +236,29 @@ function Workspace({ onLogout }) {
     timer.current = setTimeout(() => send(latest.current.content, false), delay);
   }
   function changeContent(value, pasted = false) {
+    const wasEmpty = !latest.current.content.length && !latest.current.images.length && !composing.current;
+    editRevision.current++;
+    if (imageOperation.current) imageOperation.current.sendWhenReady = false;
     cancelTimer();
-    if (ask.busy) ask.stop();
+    ask.stop();
     latest.current.content = value;
     setContent(value);
-    if (pasted && latest.current.preferences.autoSend) send(value, false);
+    if (pasted && wasEmpty && latest.current.preferences.autoSend) send(value, false);
     else schedule();
   }
   function clear() {
+    cancelImages();
     cancelTimer();
     ask.clear();
     setContent("");
     latest.current.content = "";
+    setImages([]);
+    latest.current.images = [];
     setNotice("");
     input.current?.focus();
   }
   function navigate(next) {
+    cancelImages();
     cancelTimer();
     ask.stop();
     setNotice("");
@@ -293,11 +328,15 @@ function Workspace({ onLogout }) {
       if (deadline.current) setRemaining(Math.max(1, Math.ceil((deadline.current - Date.now()) / 1000)));
     }, 200);
     const hide = () => {
-      if (document.hidden) cancelTimer();
+      if (document.hidden) {
+        cancelTimer();
+        cancelImages();
+      }
     };
     document.addEventListener("visibilitychange", hide);
     return () => {
       clearTimeout(timer.current);
+      imageOperation.current = null;
       clearInterval(interval);
       document.removeEventListener("visibilitychange", hide);
     };
@@ -306,6 +345,7 @@ function Workspace({ onLogout }) {
     if (view === "ask" && !loading) input.current?.focus();
   }, [view, loading]);
   async function switchProfile(id) {
+    cancelImages();
     cancelTimer();
     ask.stop();
     setSwitching(true);
@@ -319,9 +359,93 @@ function Workspace({ onLogout }) {
       setSwitching(false);
     }
   }
-  async function paste() {
+  async function pasteImages(files, text = "") {
+    const wasEmpty = !latest.current.content.length && !latest.current.images.length && !composing.current;
+    cancelTimer();
+    ask.stop();
+    if (!latest.current.profile?.supportsImages) {
+      setNotice("当前模型未开启图片理解，请切换模型或在设置中开启。");
+      return;
+    }
+    const previous = imageOperation.current;
+    if (files.length + latest.current.images.length + (previous?.count || 0) > MAX_IMAGES) {
+      setNotice("每次最多添加 4 张图片，请先移除部分图片。");
+      return;
+    }
+    if (text) {
+      const target = input.current;
+      const start = target?.selectionStart ?? latest.current.content.length;
+      const end = target?.selectionEnd ?? start;
+      const value = latest.current.content.slice(0, start) + text + latest.current.content.slice(end);
+      latest.current.content = value;
+      setContent(value);
+    }
+    const operation = {
+      revision: editRevision.current,
+      immediate: wasEmpty && (previous?.immediate ?? true),
+      sendWhenReady: false,
+      count: files.length + (previous?.count || 0)
+    };
+    operation.promise = Promise.all([previous?.promise || [], Promise.all(files.map(prepareImage))]).then(
+      ([earlier, added]) => [...earlier, ...added]
+    );
+    imageOperation.current = operation;
+    setPreparing(true);
+    setNotice("");
     try {
-      changeContent(await navigator.clipboard.readText(), true);
+      const added = await operation.promise;
+      if (imageOperation.current !== operation) return;
+      const next = [...latest.current.images, ...added];
+      latest.current.images = next;
+      setImages(next);
+      imageOperation.current = null;
+      setPreparing(false);
+      if (operation.sendWhenReady) send();
+      else if (
+        operation.revision === editRevision.current &&
+        operation.immediate &&
+        latest.current.preferences.autoSend &&
+        !document.hidden
+      )
+        send(latest.current.content, false);
+      else schedule();
+    } catch (error) {
+      if (imageOperation.current !== operation) return;
+      imageOperation.current = null;
+      setPreparing(false);
+      setNotice(error.message);
+      schedule();
+    }
+  }
+  function removeImage(index) {
+    cancelImages();
+    cancelTimer();
+    ask.stop();
+    const next = latest.current.images.filter((_, i) => i !== index);
+    latest.current.images = next;
+    setImages(next);
+    schedule();
+  }
+  async function paste() {
+    const revision = editRevision.current;
+    try {
+      if (navigator.clipboard.read) {
+        const items = await navigator.clipboard.read();
+        const files = [];
+        let text = "";
+        for (const item of items) {
+          const type = item.types.find((type) => type.startsWith("image/"));
+          if (type) files.push(await item.getType(type));
+          else if (item.types.includes("text/plain")) text += await (await item.getType("text/plain")).text();
+        }
+        if (revision !== editRevision.current || latest.current.view !== "ask") return;
+        if (files.length) await pasteImages(files, text);
+        else if (text) insertPastedText(text);
+      } else {
+        const text = await navigator.clipboard.readText();
+        if (revision !== editRevision.current || latest.current.view !== "ask") return;
+        if (text) insertPastedText(text);
+      }
       input.current?.focus();
     } catch {
       setNotice("无法读取剪贴板，请在输入框中使用 Ctrl / ⌘ + V 粘贴。");
@@ -335,10 +459,22 @@ function Workspace({ onLogout }) {
       setNotice("复制失败，请选中回答后手动复制。");
     }
   }
+  function insertPastedText(text) {
+    const target = input.current;
+    const start = target?.selectionStart ?? latest.current.content.length;
+    const end = target?.selectionEnd ?? start;
+    const value = latest.current.content.slice(0, start) + text + latest.current.content.slice(end);
+    changeContent(value, true);
+    requestAnimationFrame(() => input.current?.setSelectionRange(start + text.length, start + text.length));
+  }
   function openHistory(item) {
+    cancelImages();
     cancelTimer();
     ask.restore(item);
     setContent(item.content);
+    setImages(item.images || []);
+    latest.current.content = item.content;
+    latest.current.images = item.images || [];
     setIntent(intentLabels[item.intent] ? item.intent : "auto");
     setView("ask");
     setNotice("已打开历史记录，不会自动发送。");
@@ -363,17 +499,27 @@ function Workspace({ onLogout }) {
     }
   }
   function retry() {
+    cancelImages();
     const result = ask.result;
     cancelTimer();
     const originalProfile = config.profiles.find((p) => p.id === result.profileId);
     if (originalProfile)
-      ask.ask({ content: result.content, profile: originalProfile, intent: result.intent }, { force: true });
+      ask.ask(
+        {
+          content: result.content,
+          images: result.images || [],
+          profile: originalProfile,
+          intent: result.intent
+        },
+        { force: true }
+      );
   }
   const filteredHistory = history.filter((item) =>
     `${item.content}\n${item.answer}`.toLowerCase().includes(search.toLowerCase())
   );
   return (
     <main className="app-shell">
+      {previewImage && <ImagePreview url={previewImage} onClose={() => setPreviewImage(null)} />}
       <header className="topbar">
         <Brand />
         <nav aria-label="主导航">
@@ -398,6 +544,7 @@ function Workspace({ onLogout }) {
             aria-label="退出登录"
             title="退出登录"
             onClick={async () => {
+              cancelImages();
               cancelTimer();
               ask.clear();
               try {
@@ -449,7 +596,7 @@ function Workspace({ onLogout }) {
             <div className="preference-row">
               <div>
                 <strong>自动发送</strong>
-                <p>粘贴立即发送；手动输入停顿后发送</p>
+                <p>空白时粘贴立即发送；补充内容或手动输入停顿后发送</p>
               </div>
               <label className="switch-label">
                 <input
@@ -534,7 +681,8 @@ function Workspace({ onLogout }) {
                       </time>
                       {item.status !== "complete" && <span>未完成</span>}
                     </div>
-                    <strong>{item.content}</strong>
+                    <strong>{item.content || "图片快问"}</strong>
+                    {!!item.images?.length && <small>{item.images.length} 张图片</small>}
                     <p>{item.answer}</p>
                   </button>
                   <button
@@ -565,7 +713,7 @@ function Workspace({ onLogout }) {
             <div>
               <span className="eyebrow">快速提问</span>
               <h2>把问题放在这里</h2>
-              <p>命令、英文、报错或日志，直接贴进来</p>
+              <p>文字或图片，直接贴进来；也可以补充你的问题</p>
             </div>
             <ModelMenu
               profile={profile}
@@ -613,6 +761,7 @@ function Workspace({ onLogout }) {
                       aria-pressed={intent === key}
                       disabled={switching}
                       onClick={() => {
+                        cancelImages();
                         cancelTimer();
                         ask.stop();
                         setIntent(key);
@@ -622,48 +771,93 @@ function Workspace({ onLogout }) {
                     </button>
                   ))}
                 </div>
-                <textarea
-                  ref={input}
-                  aria-label="输入内容"
-                  value={content}
-                  disabled={switching}
-                  spellCheck="false"
-                  placeholder={"粘贴命令、英文、报错或日志…\n\n例如：\nPermission denied (publickey)."}
-                  onChange={(e) => changeContent(e.target.value)}
-                  onPaste={(e) => {
-                    const text = e.clipboardData.getData("text");
-                    if (!text) return;
-                    e.preventDefault();
-                    const target = e.currentTarget;
-                    const start = target.selectionStart;
-                    const value =
-                      target.value.slice(0, start) + text + target.value.slice(target.selectionEnd);
-                    changeContent(value, true);
-                    requestAnimationFrame(() =>
-                      input.current?.setSelectionRange(start + text.length, start + text.length)
-                    );
-                  }}
-                  onCompositionStart={() => {
-                    composing.current = true;
-                    cancelTimer();
-                  }}
-                  onCompositionEnd={(e) => {
-                    composing.current = false;
-                    changeContent(e.currentTarget.value);
-                  }}
-                  onKeyDown={(e) => {
-                    if (
-                      e.key === "Enter" &&
-                      !e.shiftKey &&
-                      !e.nativeEvent.isComposing &&
-                      !composing.current &&
-                      e.keyCode !== 229
-                    ) {
-                      e.preventDefault();
-                      send();
+                <div className={`input-composer ${images.length ? "has-attachments" : ""}`}>
+                  <div className="image-attachments" aria-label="已添加的图片">
+                    {images.map((url, index) => (
+                      <div className="image-attachment" key={`${index}-${url.slice(-20)}`}>
+                        <button
+                          type="button"
+                          className="image-chip-preview"
+                          aria-label={`查看图片 ${index + 1}`}
+                          onClick={() => setPreviewImage(url)}
+                        >
+                          <img src={url} alt={`已粘贴图片 ${index + 1}`} />
+                          <span>图{index + 1}</span>
+                        </button>
+                        <button
+                          className="image-chip-remove"
+                          aria-label={`移除图片 ${index + 1}`}
+                          disabled={switching}
+                          onClick={() => removeImage(index)}
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {preparing && (
+                    <div className="image-status" role="status">
+                      <Loader2 size={15} className="spin" />
+                      正在处理图片，可继续补充问题…
+                    </div>
+                  )}
+                  {!!images.length && !profile.supportsImages && (
+                    <div className="notice" role="status">
+                      当前模型未开启图片理解，请切换模型或在设置中开启。
+                    </div>
+                  )}
+                  <textarea
+                    ref={input}
+                    aria-label="输入内容"
+                    value={content}
+                    disabled={switching}
+                    spellCheck="false"
+                    placeholder={
+                      images.length
+                        ? "补充你想问的问题（可选）…"
+                        : "粘贴文字或图片…\n\n例如：报错截图、英文段落、命令或日志"
                     }
-                  }}
-                />
+                    onChange={(e) => changeContent(e.target.value)}
+                    onPaste={(e) => {
+                      const files = Array.from(e.clipboardData.items)
+                        .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                        .map((item) => item.getAsFile())
+                        .filter(Boolean);
+                      if (files.length) {
+                        e.preventDefault();
+                        void pasteImages(files, e.clipboardData.getData("text"));
+                        return;
+                      }
+                      const text = e.clipboardData.getData("text");
+                      if (!text) return;
+                      e.preventDefault();
+                      insertPastedText(text);
+                    }}
+                    onCompositionStart={() => {
+                      editRevision.current++;
+                      if (imageOperation.current) imageOperation.current.sendWhenReady = false;
+                      ask.stop();
+                      composing.current = true;
+                      cancelTimer();
+                    }}
+                    onCompositionEnd={(e) => {
+                      composing.current = false;
+                      changeContent(e.currentTarget.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (
+                        e.key === "Enter" &&
+                        !e.shiftKey &&
+                        !e.nativeEvent.isComposing &&
+                        !composing.current &&
+                        e.keyCode !== 229
+                      ) {
+                        e.preventDefault();
+                        send();
+                      }
+                    }}
+                  />
+                </div>
                 <div className="editor-meta">
                   <span className={content.length > 50000 ? "error-text" : ""}>
                     {content.length.toLocaleString()} / 50,000 字符
@@ -697,7 +891,12 @@ function Workspace({ onLogout }) {
                   ) : (
                     <button
                       className="primary-button"
-                      disabled={switching || !content.trim() || content.length > 50000}
+                      disabled={
+                        switching ||
+                        (!content.trim() && !images.length && !preparing) ||
+                        content.length > 50000 ||
+                        (images.length > 0 && !profile.supportsImages)
+                      }
                       onClick={() => send()}
                     >
                       <Send size={16} />
@@ -707,7 +906,7 @@ function Workspace({ onLogout }) {
                 </div>
                 <div className="editor-footnote">
                   {preferences.autoSend
-                    ? "粘贴即发，需要整理内容时可先关闭自动发送"
+                    ? "空白时粘贴即发；补充内容后按 Enter 或等待输入停顿"
                     : "准备好后，按 Enter 或点击“快问一下”"}
                 </div>
               </section>
@@ -716,7 +915,12 @@ function Workspace({ onLogout }) {
                 busy={ask.busy}
                 onRetry={retry}
                 onCopy={copy}
-                canRetry={!switching && !!config.profiles.find((p) => p.id === ask.result?.profileId)}
+                canRetry={
+                  !switching &&
+                  !!config.profiles.find(
+                    (p) => p.id === ask.result?.profileId && (!ask.result?.images?.length || p.supportsImages)
+                  )
+                }
               />
             </div>
           )}

@@ -13,6 +13,7 @@ export function useAsk({ onRecord }) {
     const current = active.current;
     active.current = null; // Invalidate before abort: late chunks may already be queued.
     current?.controller.abort();
+    if (current) lastSent.current = ""; // A cancelled question can be sent again after editing.
     if (current && !discard) {
       const partial = { ...current.record, status: "stopped" };
       setResult(partial);
@@ -29,10 +30,16 @@ export function useAsk({ onRecord }) {
     clear();
     setResult(record);
   }
-  async function ask({ content, profile, intent }, { force = false } = {}) {
+  async function ask({ content, images = [], profile, intent }, { force = false } = {}) {
     content = content.trim();
-    if (!profile || !content || content.length > 50000) return;
-    const signature = JSON.stringify([content, profile.id, intent]);
+    if (
+      !profile ||
+      (!content && !images.length) ||
+      content.length > 50000 ||
+      (images.length && !profile.supportsImages)
+    )
+      return;
+    const signature = JSON.stringify([content, images, profile.id, intent]);
     if (!force && lastSent.current === signature) return;
     stop();
     lastSent.current = signature;
@@ -42,6 +49,7 @@ export function useAsk({ onRecord }) {
         id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
         createdAt: new Date().toISOString(),
         content,
+        images,
         answer: "",
         profileId: profile.id,
         profileName: profile.name,
@@ -59,7 +67,12 @@ export function useAsk({ onRecord }) {
           method: "POST",
           signal: current.controller.signal,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ profileId: profile.id, content, intent })
+          body: JSON.stringify({
+            profileId: profile.id,
+            content,
+            intent,
+            ...(images.length ? { images } : {})
+          })
         })
       );
       let completed = false;

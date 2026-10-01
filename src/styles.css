@@ -451,6 +451,117 @@ textarea {
   font-size: 14px;
   line-height: 1.85;
 }
+.input-composer {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fcfdfc;
+  overflow: hidden;
+}
+.input-composer:focus-within {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px #23745a18;
+}
+.input-composer textarea {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.input-composer textarea:focus,
+.input-composer textarea:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.input-composer.has-attachments textarea {
+  padding-top: 12px;
+  min-height: 228px;
+}
+.image-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.image-attachments:not(:empty) {
+  padding: 16px 18px 0;
+}
+.image-attachment {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #cddfd3;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--green-pale);
+}
+.image-chip-preview,
+.image-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--green-deep);
+}
+.image-chip-preview {
+  min-height: 30px;
+  gap: 6px;
+  padding: 4px 7px;
+  font-size: 12px;
+}
+.image-chip-preview img {
+  width: 18px;
+  height: 18px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+.image-chip-remove {
+  align-self: stretch;
+  width: 28px;
+  padding: 0;
+  color: var(--muted);
+}
+@media (hover: hover) and (pointer: fine) {
+  .image-chip-preview:hover,
+  .image-chip-remove:hover {
+    background: #cfe5d8;
+    color: var(--green-deep);
+  }
+}
+.image-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px 0;
+  font-size: 13px;
+}
+.image-preview {
+  max-width: min(960px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 80px #10261f40;
+}
+.image-preview::backdrop {
+  background: #10261fb3;
+}
+.image-preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+.image-preview-content > img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100dvh - 100px);
+  width: auto;
+  height: auto;
+  margin: 0 auto;
+  object-fit: contain;
+}
 textarea::placeholder {
   color: #9aa9a1;
 }
